@@ -3,15 +3,15 @@ from parameterized import parameterized
 
 from cereal import log, car
 import cereal.messaging as messaging
+from opendbc.car.fingerprints import _FINGERPRINTS
+from opendbc.car.toyota.values import CAR as TOYOTA
+from opendbc.car.mazda.values import CAR as MAZDA
 from openpilot.common.params import Params
 from openpilot.selfdrive.pandad.pandad_api_impl import can_list_to_can_capnp
-from openpilot.selfdrive.car.fingerprints import _FINGERPRINTS
-from openpilot.selfdrive.car.toyota.values import CAR as TOYOTA
-from openpilot.selfdrive.car.mazda.values import CAR as MAZDA
 from openpilot.selfdrive.controls.lib.events import EVENT_NAME
 from openpilot.system.manager.process_config import managed_processes
 
-EventName = car.CarEvent.EventName
+EventName = car.OnroadEvent.EventName
 Ecu = car.CarParams.Ecu
 
 COROLLA_FW_VERSIONS = [
@@ -59,7 +59,7 @@ CX5_FW_VERSIONS = [
   (EventName.startupMaster, TOYOTA.TOYOTA_COROLLA, COROLLA_FW_VERSIONS_FUZZY, "toyota"),
 ])
 def test_startup_alert(expected_event, car_model, fw_versions, brand):
-  controls_sock = messaging.sub_sock("controlsState")
+  controls_sock = messaging.sub_sock("selfdriveState")
   pm = messaging.PubMaster(['can', 'pandaStates'])
 
   params = Params()
@@ -90,7 +90,7 @@ def test_startup_alert(expected_event, car_model, fw_versions, brand):
   managed_processes['card'].start()
 
   assert pm.wait_for_readers_to_update('can', 5)
-  pm.send('can', can_list_to_can_capnp([[0, 0, b"", 0]]))
+  pm.send('can', can_list_to_can_capnp([[0, b"", 0]]))
 
   assert pm.wait_for_readers_to_update('pandaStates', 5)
   msg = messaging.new_message('pandaStates', 1)
@@ -103,7 +103,7 @@ def test_startup_alert(expected_event, car_model, fw_versions, brand):
   else:
     finger = _FINGERPRINTS[car_model][0]
 
-  msgs = [[addr, 0, b'\x00'*length, 0] for addr, length in finger.items()]
+  msgs = [[addr, b'\x00'*length, 0] for addr, length in finger.items()]
   for _ in range(1000):
     # card waits for pandad to echo back that it has changed the multiplexing mode
     if not params.get_bool("ObdMultiplexingChanged"):
@@ -114,7 +114,7 @@ def test_startup_alert(expected_event, car_model, fw_versions, brand):
 
     ctrls = messaging.drain_sock(controls_sock)
     if len(ctrls):
-      event_name = ctrls[0].controlsState.alertType.split("/")[0]
+      event_name = ctrls[0].selfdriveState.alertType.split("/")[0]
       assert EVENT_NAME[expected_event] == event_name, f"expected {EVENT_NAME[expected_event]} for '{car_model}', got {event_name}"
       break
   else:

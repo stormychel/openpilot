@@ -85,6 +85,7 @@ bool Replay::load() {
     return false;
   }
   rInfo("load route %s with %zu valid segments", qPrintable(route_->name()), segments_.size());
+  max_seconds_ = (segments_.rbegin()->first + 1) * 60;
   return true;
 }
 
@@ -108,7 +109,11 @@ void Replay::seekTo(double seconds, bool relative) {
     target_time = std::max(double(0.0), target_time);
     int target_segment = (int)target_time / 60;
     if (segments_.count(target_segment) == 0) {
-      rWarning("Can't seek to %d s segment %d is invalid", (int)target_time, target_segment);
+      rWarning("Can't seek to %.2f s segment %d is invalid", target_time, target_segment);
+      return true;
+    }
+    if (target_time > max_seconds_) {
+      rWarning("Can't seek to %.2f s, time is invalid", target_time);
       return true;
     }
 
@@ -148,15 +153,15 @@ void Replay::buildTimeline() {
   uint64_t engaged_begin = 0;
   bool engaged = false;
 
-  auto alert_status = cereal::ControlsState::AlertStatus::NORMAL;
-  auto alert_size = cereal::ControlsState::AlertSize::NONE;
+  auto alert_status = cereal::SelfdriveState::AlertStatus::NORMAL;
+  auto alert_size = cereal::SelfdriveState::AlertSize::NONE;
   uint64_t alert_begin = 0;
   std::string alert_type;
 
   const TimelineType timeline_types[] = {
-    [(int)cereal::ControlsState::AlertStatus::NORMAL] = TimelineType::AlertInfo,
-    [(int)cereal::ControlsState::AlertStatus::USER_PROMPT] = TimelineType::AlertWarning,
-    [(int)cereal::ControlsState::AlertStatus::CRITICAL] = TimelineType::AlertCritical,
+    [(int)cereal::SelfdriveState::AlertStatus::NORMAL] = TimelineType::AlertInfo,
+    [(int)cereal::SelfdriveState::AlertStatus::USER_PROMPT] = TimelineType::AlertWarning,
+    [(int)cereal::SelfdriveState::AlertStatus::CRITICAL] = TimelineType::AlertCritical,
   };
 
   const auto &route_segments = route_->segments();
@@ -166,10 +171,10 @@ void Replay::buildTimeline() {
 
     std::vector<std::tuple<double, double, TimelineType>> timeline;
     for (const Event &e : log->events) {
-      if (e.which == cereal::Event::Which::CONTROLS_STATE) {
+      if (e.which == cereal::Event::Which::SELFDRIVE_STATE) {
         capnp::FlatArrayMessageReader reader(e.data);
         auto event = reader.getRoot<cereal::Event>();
-        auto cs = event.getControlsState();
+        auto cs = event.getSelfdriveState();
 
         if (engaged != cs.getEnabled()) {
           if (engaged) {
@@ -180,7 +185,7 @@ void Replay::buildTimeline() {
         }
 
         if (alert_type != cs.getAlertType().cStr() || alert_status != cs.getAlertStatus()) {
-          if (!alert_type.empty() && alert_size != cereal::ControlsState::AlertSize::NONE) {
+          if (!alert_type.empty() && alert_size != cereal::SelfdriveState::AlertSize::NONE) {
             timeline.push_back({toSeconds(alert_begin), toSeconds(e.mono_time), timeline_types[(int)alert_status]});
           }
           alert_begin = e.mono_time;
@@ -193,14 +198,21 @@ void Replay::buildTimeline() {
       }
     }
 
+    if (it->first == route_segments.rbegin()->first) {
+      if (engaged) {
+        timeline.push_back({toSeconds(engaged_begin), toSeconds(log->events.back().mono_time), TimelineType::Engaged});
+      }
+      if (!alert_type.empty() && alert_size != cereal::SelfdriveState::AlertSize::NONE) {
+        timeline.push_back({toSeconds(alert_begin), toSeconds(log->events.back().mono_time), timeline_types[(int)alert_status]});
+      }
+
+      max_seconds_ = std::ceil(toSeconds(log->events.back().mono_time));
+      emit minMaxTimeChanged(route_segments.cbegin()->first * 60.0, max_seconds_);
+    }
     {
       std::lock_guard lk(timeline_lock);
       timeline_.insert(timeline_.end(), timeline.begin(), timeline.end());
       std::sort(timeline_.begin(), timeline_.end(), [](auto &l, auto &r) { return std::get<2>(l) < std::get<2>(r); });
-    }
-
-    if (it->first == route_segments.rbegin()->first) {
-      emit totalSecondsUpdated(toSeconds(log->events.back().mono_time));
     }
     emit qLogLoaded(log);
   }
@@ -463,7 +475,7 @@ void Replay::streamThread() {
       int last_segment = segments_.rbegin()->first;
       if (current_segment_ >= last_segment && isSegmentMerged(last_segment)) {
         rInfo("reaches the end of route, restart from beginning");
-        QMetaObject::invokeMethod(this, std::bind(&Replay::seekTo, this, 0, false), Qt::QueuedConnection);
+        QMetaObject::invokeMethod(this, std::bind(&Replay::seekTo, this, minSeconds(), false), Qt::QueuedConnection);
       }
     }
   }

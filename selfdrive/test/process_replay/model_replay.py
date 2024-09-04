@@ -10,8 +10,7 @@ from openpilot.tools.lib.openpilotci import BASE_URL, get_url
 from openpilot.selfdrive.test.process_replay.compare_logs import compare_logs, format_diff
 from openpilot.selfdrive.test.process_replay.process_replay import get_process_config, replay_process
 from openpilot.tools.lib.framereader import FrameReader
-from openpilot.tools.lib.logreader import LogReader
-from openpilot.tools.lib.helpers import save_log
+from openpilot.tools.lib.logreader import LogReader, save_log
 
 TEST_ROUTE = "2f4452b03ccb98f0|2022-12-03--13-45-30"
 SEGMENT = 6
@@ -74,11 +73,11 @@ if __name__ == "__main__":
   ref_commit_fn = os.path.join(replay_dir, "model_replay_ref_commit")
 
   # load logs
-  lr = list(LogReader(get_url(TEST_ROUTE, SEGMENT)))
+  lr = list(LogReader(get_url(TEST_ROUTE, SEGMENT, "rlog.bz2")))
   frs = {
-    'roadCameraState': FrameReader(get_url(TEST_ROUTE, SEGMENT, log_type="fcamera"), readahead=True),
-    'driverCameraState': FrameReader(get_url(TEST_ROUTE, SEGMENT, log_type="dcamera"), readahead=True),
-    'wideRoadCameraState': FrameReader(get_url(TEST_ROUTE, SEGMENT, log_type="ecamera"), readahead=True)
+    'roadCameraState': FrameReader(get_url(TEST_ROUTE, SEGMENT, "fcamera.hevc"), readahead=True),
+    'driverCameraState': FrameReader(get_url(TEST_ROUTE, SEGMENT, "dcamera.hevc"), readahead=True),
+    'wideRoadCameraState': FrameReader(get_url(TEST_ROUTE, SEGMENT, "ecamera.hevc"), readahead=True)
   }
 
   log_msgs = []
